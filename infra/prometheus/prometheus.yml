@@ -1,0 +1,25 @@
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+
+scrape_configs:
+
+  - job_name: 'stock-producer'
+    static_configs:
+      - targets: ['producer:8001']
+
+  - job_name: 'stock-consumer'
+    static_configs:
+      - targets: ['consumer:8002']
+
+  - job_name: 'stock-dbt'
+    static_configs:
+      - targets: ['dbt-runner:8003']
+
+  - job_name: 'stock-agent-scheduler'
+    static_configs:
+      - targets: ['agent-scheduler:8004']
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

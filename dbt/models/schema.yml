@@ -1,0 +1,54 @@
+version: 2
+
+models:
+
+  - name: stg_silver_bars
+    description: >
+      Staging view over silver.ohlcv_1min. Adds derived columns:
+      price_change_pct, dollar_volume, bar_range.
+    columns:
+      - name: symbol
+        description: Stock ticker symbol
+        tests: [not_null]
+      - name: bar_time
+        description: UTC timestamp of the 1-minute bar
+        tests: [not_null]
+      - name: close
+        description: Closing price of the bar
+        tests: [not_null]
+      - name: volume
+        description: Total shares traded in this bar
+        tests: [not_null]
+
+  - name: ohlcv_1min
+    description: >
+      Gold base table. 1-minute OHLCV bars per symbol.
+      TimescaleDB hypertable for fast time-range queries.
+      All other Gold models reference this.
+
+  - name: volume_baseline
+    description: >
+      20-day average and stddev of volume per symbol per hour-of-day.
+      Used to compute z-scores that account for time-of-day patterns.
+
+  - name: volume_anomalies
+    description: >
+      Bars where volume z-score exceeds 2.5 vs 20-day baseline.
+      One row per bar per symbol. is_anomaly = TRUE means flagged.
+
+  - name: price_anomalies
+    description: >
+      Bars where price moved more than 2% in under 5 minutes.
+      Uses LAG() window function over 5 bars.
+
+  - name: sector_summary
+    description: >
+      Latest sector-level aggregation. Agent reads this to check
+      whether an anomaly is company-specific or sector-wide.
+
+  - name: anomaly_feed
+    description: >
+      THE table the agent reads every 5 minutes.
+      Unified feed of all unvestigated volume + price anomalies,
+      ranked by severity_score (3=extreme, 2=high, 1=medium).
+      investigated flag set to TRUE after agent processes each row.

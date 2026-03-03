@@ -1,0 +1,12 @@
+stock_pipeline:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('TIMESCALE_HOST', 'timescaledb') }}"
+      port: "{{ env_var('TIMESCALE_PORT', '5432') | int }}"
+      dbname: "{{ env_var('TIMESCALE_DB', 'stockdb') }}"
+      user: "{{ env_var('TIMESCALE_USER', 'stock') }}"
+      password: "{{ env_var('TIMESCALE_PASSWORD', 'stock123') }}"
+      schema: public
+      threads: 4
