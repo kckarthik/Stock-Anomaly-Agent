@@ -1,6 +1,6 @@
 # Stock Market Anomaly Investigation Agent
 
-> A production-grade agentic data engineering pipeline that monitors real stock market data, detects anomalies, and autonomously investigates them using a local LLM — entirely on your machine, with no cloud dependencies and no paid APIs.
+> A production-grade agentic data engineering pipeline that monitors real stock market data, detects statistical anomalies, and autonomously investigates them using a ReAct (Reason+Act) loop driven by a local LLM — entirely on-premises, with no cloud dependencies and no paid APIs.
 
 ---
 
@@ -9,12 +9,13 @@
 Every 5 minutes, the agent:
 
 1. Reads newly flagged anomalies from the Gold data layer
-2. Runs 5 deterministic investigation tools per anomaly — price history, sector peers, SEC filings, options activity
-3. Synthesises all evidence with a local LLM (Qwen2.5 0.5b via Ollama)
-4. Persists a structured investigation report to TimescaleDB
-5. Surfaces everything in Grafana and a REST API
+2. Launches a **ReAct investigation loop** — the LLM decides which tool to run next based on accumulating evidence, adapting its strategy per anomaly
+3. Concludes when sufficient evidence is gathered (2–4 tool calls, not a fixed sequence)
+4. Synthesises all findings with a local LLM (Qwen2.5 0.5b via Ollama) into a structured report
+5. Persists the full reasoning chain and report to TimescaleDB
+6. Surfaces everything in Grafana and a REST API
 
-It doesn't just alert — it **investigates**, the way a junior analyst would.
+The key distinction from rule-based pipelines: **the agent reasons about what to investigate next**, not just what threshold was breached. A volume spike in the Energy sector triggers different tool choices than an isolated intraday price move.
 
 ---
 
@@ -35,14 +36,14 @@ It doesn't just alert — it **investigates**, the way a junior analyst would.
         │  batch every 60s
         ▼
  ┌─────────────┐
- │  Consumer   │──── Bronze ──► MinIO  (raw Parquet, by symbol/date/hour)
+ │  Consumer   │──── Bronze ──► MinIO  (raw Parquet, partitioned by symbol/date/hour)
  │             │──── Silver ──► MinIO  (OHLCV 1-min bars)
  └──────┬──────┘          └──► TimescaleDB  silver.ohlcv_1min
         │  every 5 min
         ▼
  ┌─────────────┐    Gold layer (TimescaleDB)
  │ dbt Runner  │──► ohlcv_1min        base 1-min OHLCV bars
- │             │──► volume_baseline   20-day avg per symbol/hour
+ │             │──► volume_baseline   20-day rolling avg per symbol/hour
  │             │──► volume_anomalies  z-score spikes vs baseline
  │             │──► price_anomalies   moves > 2% in < 5 min
  │             │──► sector_summary    sector-level aggregation
@@ -53,26 +54,36 @@ It doesn't just alert — it **investigates**, the way a junior analyst would.
  ┌──────────────────┐
  │ Agent Scheduler  │  reads anomaly_feed · dispatches Celery tasks by priority
  └────────┬─────────┘
-          │  HIGH / MEDIUM / LOW queues
+          │  HIGH / MEDIUM / LOW priority queues
           ▼
- ┌──────────────────────────────────┐
- │   Celery Workers  (x2 parallel)  │
- │                                  │
- │   1. get_anomaly_detail          │  ← Gold DB
- │   2. get_price_history           │  ← yfinance  (20-day baseline)
- │   3. get_sector_peers            │  ← Gold DB   (isolated or sector-wide?)
- │   4. get_sec_filings             │  ← SEC EDGAR (Form 4 insider · 8-K events)
- │   5. get_options_data            │  ← yfinance  (put/call ratio)
- │   ────────────────────────────   │
- │   6. Qwen2.5 0.5b  (one call)    │  ← Ollama    (local, offline)
- │   7. write report                │  → TimescaleDB  gold.investigation_reports
- └──────────────────────────────────┘
+ ┌────────────────────────────────────────────────┐
+ │          Celery Workers  (x2 parallel)         │
+ │                                                │
+ │  Step 0 (mandatory):  get_anomaly_detail       │  ← Gold DB
+ │                                                │
+ │  ReAct Loop (LLM-directed, 2–4 iterations):   │
+ │  ┌──────────────────────────────────────────┐  │
+ │  │  LLM decides:  which tool to run next?   │  │
+ │  │                                          │  │
+ │  │  Available tools:                        │  │
+ │  │    • get_price_history  ← yfinance       │  │
+ │  │    • get_sector_peers   ← Gold DB        │  │
+ │  │    • get_sec_filings    ← SEC EDGAR      │  │
+ │  │    • get_options_data   ← yfinance       │  │
+ │  │    • CONCLUDE           (early exit)     │  │
+ │  │                                          │  │
+ │  │  → run chosen tool → add to evidence     │  │
+ │  │  → loop until CONCLUDE or step limit     │  │
+ │  └──────────────────────────────────────────┘  │
+ │                                                │
+ │  Final: LLM synthesises all evidence once  ────┼──► TimescaleDB  gold.investigation_reports
+ └────────────────────────────────────────────────┘
 
  Observability
- ├── Langfuse    every LLM call — prompt · response · tokens · latency
+ ├── Langfuse    multi-span traces — one span per LLM decision + synthesis
  ├── Flower      every Celery task — active · retried · failed
- ├── Prometheus  pipeline metrics from all services
- └── Grafana     live dashboard — price data · anomalies · reports · LLM health
+ ├── Prometheus  pipeline throughput metrics from all services
+ └── Grafana     14 live panels — data health · anomalies · reports · LLM performance
 ```
 
 ---
@@ -136,32 +147,154 @@ First run downloads the Qwen2.5:0.5b model (~400 MB). Allow 3–5 minutes for al
 
 ## Grafana Dashboard
 
-Twelve live panels auto-provisioned at startup:
+Fourteen live panels auto-provisioned at startup:
 
 | Panel | Description |
 |---|---|
-| Last Quote Received | Timestamp of most recent bar |
+| Last Quote Received | Timestamp of most recent market bar |
 | Bars Last 5 Min | Live data freshness indicator |
 | Investigations Today | Report count for current day |
 | Pending Anomalies | Uninvestigated queue depth |
-| Latest Agent Reports | Last 20 reports with hypothesis |
-| Severity Breakdown | Pie chart — HIGH / MEDIUM / LOW |
-| Anomaly Feed | Current queue with scores |
+| Latest Agent Reports | Last 20 reports with hypothesis, steps taken, and recommended action |
+| Severity Breakdown | Pie chart — HIGH / MEDIUM / LOW distribution |
+| Anomaly Feed | Current queue with anomaly scores |
 | Quotes Published / min | Producer throughput (Prometheus) |
 | Agent Tasks Dispatched | Dispatch rate by severity (Prometheus) |
-| LLM Traces | Last 20 calls — model, tokens, latency |
-| Avg LLM Latency | Rolling 24-hour average |
-| LLM Success Rate | Reliability gauge |
+| LLM Traces | Last 20 calls — model, tokens, latency, call type |
+| Avg LLM Latency | Rolling 24-hour average response time |
+| LLM Success Rate | Parse success rate as a reliability gauge |
+| Avg Steps / Investigation | Mean ReAct iterations per investigation (lower = more decisive) |
+| ReAct Override Rate % | Fraction of decisions where the validator overrode LLM output |
+
+---
+
+## ReAct Investigation Loop
+
+The agent uses a **ReAct (Reason + Act)** pattern for all investigations. Rather than running every tool in a fixed sequence, the LLM examines the evidence collected so far and selects the most relevant next action.
+
+### How it works
+
+```
+Step 0:  get_anomaly_detail   ← always runs first (no LLM decision needed)
+
+Step 1:  LLM receives evidence summary → chooses one of:
+           get_price_history | get_sector_peers | get_sec_filings | get_options_data
+         → tool runs → result added to findings
+
+Step 2:  LLM receives updated evidence → chooses next tool or CONCLUDE
+         (CONCLUDE only available after MIN_REACT_STEPS = 2)
+
+...up to MAX_REACT_STEPS (default 4) iterations
+
+Final:   LLM synthesises all accumulated findings into structured report
+```
+
+### Decision validation
+
+Every LLM decision passes through a deterministic validator before execution:
+
+| LLM output | Outcome |
+|---|---|
+| Exact tool name | Used directly |
+| Partial match (e.g. `"price_history"`) | Resolved to `get_price_history` |
+| Numeric choice (e.g. `"1"`) | Mapped to tool at that index |
+| `CONCLUDE` before `MIN_REACT_STEPS` | Overridden — continue with next available tool |
+| Unrecognisable output | Fallback to first remaining tool |
+
+Override decisions are logged, written to `obs.llm_traces`, and exposed in the **ReAct Override Rate %** Grafana panel — giving full observability into model reliability.
+
+### react_steps schema
+
+The full reasoning chain is stored in the `react_steps` JSONB column of `gold.investigation_reports`:
+
+```json
+[
+  {
+    "step": 0,
+    "decision": "get_anomaly_detail",
+    "tool": "get_anomaly_detail",
+    "rationale": "mandatory",
+    "result_summary": "volume_zscore=3.8, price_change=+1.2%",
+    "duration_ms": 45,
+    "success": true
+  },
+  {
+    "step": 1,
+    "decision": "get_sec_filings",
+    "tool": "get_sec_filings",
+    "rationale": "model_choice",
+    "result_summary": "FOUND: 2 Form 4 insider trades",
+    "duration_ms": 820,
+    "success": true
+  },
+  {
+    "step": 2,
+    "decision": "get_sector_peers",
+    "tool": "get_sector_peers",
+    "rationale": "model_choice",
+    "result_summary": "ISOLATED: sector peers normal",
+    "duration_ms": 310,
+    "success": true
+  }
+]
+```
+
+---
+
+## Investigation Report Schema
+
+```json
+{
+  "report_id":          "uuid",
+  "symbol":             "AAPL",
+  "sector":             "Technology",
+  "anomaly_type":       "volume_spike",
+  "severity":           "HIGH | MEDIUM | LOW",
+  "hypothesis":         "one sentence on what is happening",
+  "evidence_summary":   "2–3 sentences on key findings",
+  "conclusion":         "final assessment",
+  "confidence":         "HIGH | MEDIUM | LOW",
+  "recommended_action": "MONITOR | INVESTIGATE_FURTHER | ESCALATE | NO_ACTION",
+  "steps_taken":        3,
+  "react_steps":        [...],
+  "total_time_seconds": 42.1,
+  "investigated_at":    "2026-03-03T10:32:15Z"
+}
+```
+
+**Retry policy:** up to 3 retries with 30-second backoff — handles Ollama timeouts, DB connection blips, and SEC EDGAR rate limits.
+
+---
+
+## Anomaly Detection
+
+### Detection thresholds (`.env`)
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `VOLUME_ZSCORE_THRESHOLD` | 2.5 | Flag if volume exceeds 2.5 standard deviations above the 20-day rolling average |
+| `PRICE_CHANGE_THRESHOLD` | 2.0 | Flag if price moves more than 2% within a 5-minute window |
+
+### Agent behaviour (`.env`)
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `MAX_REACT_STEPS` | 4 | Maximum tool calls per investigation |
+| `MIN_REACT_STEPS` | 2 | Minimum before LLM may choose CONCLUDE |
+| `AGENT_SCHEDULE_MINUTES` | 5 | Scheduler polling interval |
+| `MAX_INVESTIGATION_STEPS` | 5 | Celery task hard cap |
+| `AGENT_MAX_RETRIES` | 3 | Retry attempts per failed task |
+| `AGENT_RETRY_DELAY_SECONDS` | 30 | Backoff between retries |
 
 ---
 
 ## REST API
 
 ```bash
-# Health
+# Health check
 GET  /health
 
-# Reports
+# Investigation reports
 GET  /reports
 GET  /reports?severity=HIGH
 GET  /reports/{symbol}
@@ -170,13 +303,44 @@ GET  /reports/{symbol}
 GET  /anomalies
 GET  /anomalies?investigated=false
 
-# Pipeline stats
+# Pipeline statistics
 GET  /stats
 
-# Natural language query
+# Natural language query (powered by local LLM)
 POST /ask
 { "question": "What was the most unusual event today and why?" }
 ```
+
+Full interactive documentation: http://localhost:8080/docs
+
+---
+
+## LLM Observability
+
+### Langfuse traces
+
+When Langfuse is configured, each investigation produces a multi-span trace — one generation span per ReAct decision, plus the final synthesis span, all linked under a single `trace_id`:
+
+```
+Trace: investigate:AAPL:volume_spike                    (total 42s)
+  ├── llm:qwen2.5-decide-step1    480ms   → get_sec_filings
+  ├── tool:get_sec_filings        820ms   Form 4: insider sold $9.2M
+  ├── llm:qwen2.5-decide-step2    510ms   → get_sector_peers
+  ├── tool:get_sector_peers       310ms   ISOLATED: peers normal
+  ├── llm:qwen2.5-decide-step3    490ms   → CONCLUDE
+  └── llm:qwen2.5-synthesise      38.2s   severity: HIGH  input=480 out=210 tok
+```
+
+### TimescaleDB fallback
+
+Without Langfuse keys, every LLM call is still written to `obs.llm_traces` in TimescaleDB — zero configuration required. The Grafana "LLM Traces" panel reads from this table directly.
+
+### Enabling Langfuse
+
+1. Visit http://localhost:3002 → sign up (fully local, no internet required)
+2. Create a project → Settings → API Keys → generate a key pair
+3. Paste the keys into `.env` under `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`
+4. `docker compose restart celery-worker agent-scheduler`
 
 ---
 
@@ -190,72 +354,6 @@ POST /ask
 | Energy | XOM · CVX · COP · SLB · EOG |
 
 To add symbols, edit `WATCHLIST` in any service's `config.py` and run `docker compose build`.
-
----
-
-## Investigation Pipeline
-
-For every anomaly the agent executes these steps in order:
-
-| Step | Tool | Source | Output |
-|---|---|---|---|
-| 1 | `get_anomaly_detail` | TimescaleDB Gold | Volume z-score, price change, severity score |
-| 2 | `get_price_history` | yfinance | 20-day OHLCV baseline, trend direction |
-| 3 | `get_sector_peers` | TimescaleDB Gold | Isolated vs sector-wide assessment |
-| 4 | `get_sec_filings` | SEC EDGAR | Form 4 insider trades, 8-K material events (last 7 days) |
-| 5 | `get_options_data` | yfinance | Put/call ratio, implied volatility |
-| 6 | LLM synthesis | Ollama (local) | Structured JSON report |
-
-The LLM is called **exactly once** per investigation, after all evidence is in hand.
-
-**Report schema:**
-```json
-{
-  "severity":           "HIGH | MEDIUM | LOW",
-  "hypothesis":         "one sentence on what is happening",
-  "evidence_summary":   "2–3 sentences on key findings",
-  "conclusion":         "final assessment",
-  "confidence":         "HIGH | MEDIUM | LOW",
-  "recommended_action": "MONITOR | INVESTIGATE_FURTHER | ESCALATE | NO_ACTION"
-}
-```
-
-**Retry policy:** up to 3 retries with 30-second backoff — handles Ollama timeouts, DB blips, and SEC EDGAR rate limits.
-
----
-
-## Anomaly Detection Thresholds
-
-Set in `.env`:
-
-| Parameter | Default | Meaning |
-|---|---|---|
-| `VOLUME_ZSCORE_THRESHOLD` | 2.5 | Flag if volume exceeds 2.5 standard deviations above the 20-day average |
-| `PRICE_CHANGE_THRESHOLD` | 2.0 | Flag if price moves more than 2% within a 5-minute window |
-
----
-
-## LLM Observability
-
-Langfuse traces every investigation automatically once keys are configured:
-
-```
-Trace: investigate — AAPL — 10:32:15                          (total 4.2s)
-  ├── tool:get_anomaly_detail      340ms   volume_zscore: 3.8
-  ├── tool:get_price_history       510ms   5d_trend: -1.2%  avg_vol: 2.1M
-  ├── tool:get_sector_peers        290ms   ISOLATED: peers normal
-  ├── tool:get_sec_filings         890ms   Form 4: CFO sold $9.2M
-  ├── tool:get_options_data        420ms   put/call 1.8 — elevated
-  └── llm:qwen2.5-synthesise      1.4s    severity: HIGH  580 tokens
-```
-
-Without Langfuse keys, all traces fall back to `obs.llm_traces` in TimescaleDB — zero config required.
-
-**To enable Langfuse:**
-1. Visit http://localhost:3002 → sign up (fully local, no internet)
-2. Create a project → Settings → API Keys → generate a key pair
-3. Paste the keys into `.env` under `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`
-4. `docker compose restart celery-worker agent-scheduler`
 
 ---
 
@@ -280,16 +378,17 @@ stock-agent/
 │   │   ├── aggregator.py
 │   │   └── storage.py
 │   │
-│   ├── agent/              orchestration · investigation · LLM
-│   │   ├── scheduler.py    reads anomaly_feed · dispatches tasks
-│   │   ├── tasks.py        Celery task definitions
-│   │   ├── investigator.py investigation runner
-│   │   ├── tools.py        5 deterministic tools
-│   │   ├── llm.py          Ollama client · Langfuse tracing
+│   ├── agent/              orchestration · ReAct investigation · LLM
+│   │   ├── scheduler.py    reads anomaly_feed · dispatches tasks by priority
+│   │   ├── tasks.py        Celery task definitions + retry policy
+│   │   ├── investigator.py ReAct loop · tool dispatch · decision validation
+│   │   ├── tools.py        4 evidence-gathering tools (price · peers · SEC · options)
+│   │   ├── llm.py          Ollama client · decide_next_action · Langfuse tracing
+│   │   ├── config.py       environment-driven configuration
 │   │   ├── Dockerfile
 │   │   └── Dockerfile.dbt
 │   │
-│   └── api/                FastAPI · REST + /ask endpoint
+│   └── api/                FastAPI · REST endpoints + /ask (NL query)
 │       └── main.py
 │
 ├── dbt/
@@ -299,7 +398,7 @@ stock-agent/
 │                           price_anomalies · sector_summary · anomaly_feed
 │
 └── infra/
-    ├── postgres/init.sql   TimescaleDB schema
+    ├── postgres/init.sql   TimescaleDB schema (hypertables, Gold models)
     ├── prometheus/
     └── grafana/provisioning/
 ```
@@ -321,7 +420,7 @@ stock-agent/
 | Kafka UI + Flower | ~200 MB |
 | **Total** | **~3.1 GB** |
 
-To free ~400 MB, stop non-essential UIs — pipeline continues unaffected:
+To free ~400 MB, stop non-essential monitoring UIs — the pipeline continues unaffected:
 ```bash
 docker compose stop kafka-ui flower
 ```
@@ -363,7 +462,12 @@ docker exec -it stock-ollama ollama pull qwen2.5:0.5b
 **Agent not investigating**
 - `docker logs stock-agent-scheduler` — check anomalies being dispatched
 - `docker logs stock-celery-worker` — check task execution
-- Thresholds in `.env` may be too high for current conditions — try lowering `VOLUME_ZSCORE_THRESHOLD` to 2.0
+- Thresholds in `.env` may be too high — try lowering `VOLUME_ZSCORE_THRESHOLD` to 2.0
+
+**ReAct Override Rate too high (>50%)**
+- The model is struggling to follow the decision format
+- Consider switching to a larger model: `OLLAMA_MODEL=qwen2.5:1.5b` in `.env`
+- Restart: `docker compose restart celery-worker agent-scheduler`
 
 ---
 
