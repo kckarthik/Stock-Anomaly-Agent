@@ -44,7 +44,7 @@ def get_reports(limit: int = 20, severity: Optional[str] = None):
         cur.execute(
             f"""SELECT report_id, symbol, sector, anomaly_type, severity, hypothesis,
                    evidence_summary, conclusion, confidence, recommended_action,
-                   investigated_at, total_time_seconds
+                   investigated_at, total_time_seconds, steps_taken, react_steps
                FROM gold.investigation_reports {where}
                ORDER BY investigated_at DESC LIMIT %s""",
             args + (limit,),
@@ -64,7 +64,8 @@ def get_symbol_reports(symbol: str, limit: int = 10):
         cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(
             """SELECT report_id, symbol, anomaly_type, severity, hypothesis,
-                      evidence_summary, conclusion, confidence, recommended_action, investigated_at
+                      evidence_summary, conclusion, confidence, recommended_action,
+                      investigated_at, steps_taken, react_steps
                FROM gold.investigation_reports WHERE symbol = %s
                ORDER BY investigated_at DESC LIMIT %s""",
             (symbol.upper(), limit),

@@ -47,8 +47,8 @@ log = get_task_logger(__name__)
     name            = "tasks.investigate_anomaly",
     max_retries     = PipelineConfig.AGENT_MAX_RETRIES,
     default_retry_delay = PipelineConfig.AGENT_RETRY_DELAY,
-    soft_time_limit = 300,   # 5 min soft limit (LLM ~30s + tools + flush headroom)
-    time_limit      = 360,   # 6 min hard limit
+    soft_time_limit = 360,   # 6 min: 4 decisions×60s + synthesis×60s + overhead
+    time_limit      = 420,   # 7 min hard limit
 )
 def investigate_anomaly(self, anomaly_id: str, severity_score: int = 1) -> dict:
     """

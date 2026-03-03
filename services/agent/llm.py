@@ -149,18 +149,20 @@ def _save_to_db(trace_id: str, symbol: str, anomaly_type: str,
     try:
         conn = psycopg2.connect(TimescaleConfig.dsn())
         cur  = conn.cursor()
-        cur.execute(
-            """INSERT INTO obs.llm_traces
-               (trace_id, symbol, anomaly_type, model, prompt, response,
-                input_tokens, output_tokens, latency_ms, success, error_message)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (trace_id, symbol, anomaly_type, OllamaConfig.MODEL,
-             prompt[:4000], response[:2000],
-             input_tokens, output_tokens, latency_ms, success, error),
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
+        try:
+            cur.execute(
+                """INSERT INTO obs.llm_traces
+                   (trace_id, symbol, anomaly_type, model, prompt, response,
+                    input_tokens, output_tokens, latency_ms, success, error_message)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (trace_id, symbol, anomaly_type, OllamaConfig.MODEL,
+                 prompt[:4000], response[:2000],
+                 input_tokens, output_tokens, latency_ms, success, error),
+            )
+            conn.commit()
+        finally:
+            cur.close()
+            conn.close()
     except Exception as e:
         log.warning(f"DB trace write failed: {e}")
 
@@ -284,3 +286,130 @@ def _fallback(reason: str) -> dict:
         "confidence":         "LOW",
         "recommended_action": "INVESTIGATE_FURTHER",
     }
+
+
+# ── ReAct decision function ─────────────────────────────────────────
+
+DECISION_SYSTEM_PROMPT = (
+    "You are a stock analyst deciding what to investigate next. "
+    "Reply with ONLY one of the options listed. No explanation, no punctuation."
+)
+
+
+def _build_decision_prompt(
+    symbol: str, anomaly_type: str, severity_score: int,
+    evidence_summary: str, available_tools: list,
+    step: int, min_steps: int,
+) -> str:
+    lines = [
+        "SITUATION:",
+        f"Symbol: {symbol} | Anomaly: {anomaly_type} | Severity: {severity_score}/3",
+        "",
+        "EVIDENCE SO FAR:",
+        evidence_summary or "None yet.",
+        "",
+        "TOOLS AVAILABLE:",
+    ]
+    for i, tool in enumerate(available_tools, start=1):
+        lines.append(f"{i}. {tool}")
+    if step >= min_steps:
+        lines.append(f"{len(available_tools) + 1}. CONCLUDE")
+    lines.extend([
+        "",
+        "Reply with ONLY the tool name or CONCLUDE. No other text.",
+    ])
+    return "\n".join(lines)
+
+
+def decide_next_action(
+    symbol: str, anomaly_type: str, severity_score: int,
+    evidence_summary: str, available_tools: list,
+    step: int, min_steps: int, trace_id: Optional[str] = None,
+) -> str:
+    """
+    Ask the LLM which tool to run next in the ReAct loop.
+    Returns the raw response string. Never raises — returns "" on exception.
+    Writes to obs.llm_traces always; attaches to Langfuse trace if configured.
+    """
+    t_id      = trace_id or "no-id"
+    start_ms  = int(time.time() * 1000)
+    prompt    = _build_decision_prompt(
+        symbol, anomaly_type, severity_score,
+        evidence_summary, available_tools, step, min_steps,
+    )
+    raw_content = ""
+
+    # Langfuse span — attach to same trace as synthesise() (best-effort)
+    lf_generation = None
+    if _langfuse and trace_id:
+        try:
+            lf_trace = _langfuse.trace(
+                id       = trace_id,
+                name     = f"investigate:{symbol}:{anomaly_type}",
+                metadata = {"symbol": symbol, "anomaly_type": anomaly_type},
+            )
+            lf_generation = lf_trace.generation(
+                name  = f"llm:qwen2.5-decide-step{step}",
+                model = OllamaConfig.MODEL,
+                input = [
+                    {"role": "system", "content": DECISION_SYSTEM_PROMPT},
+                    {"role": "user",   "content": prompt},
+                ],
+            )
+        except Exception:
+            pass
+
+    try:
+        response = requests.post(
+            f"{OllamaConfig.HOST}/api/chat",
+            json={
+                "model":  OllamaConfig.MODEL,
+                "stream": False,
+                "options": {"temperature": 0.0, "num_predict": 100},
+                "messages": [
+                    {"role": "system", "content": DECISION_SYSTEM_PROMPT},
+                    {"role": "user",   "content": prompt},
+                ],
+            },
+            timeout=60,
+        )
+        response.raise_for_status()
+
+        data          = response.json()
+        raw_content   = data["message"]["content"].strip()
+        input_tokens  = data.get("prompt_eval_count", 0)
+        output_tokens = data.get("eval_count", 0)
+        latency_ms    = int(time.time() * 1000) - start_ms
+
+        if lf_generation:
+            try:
+                lf_generation.end(
+                    output = {"decision": raw_content},
+                    usage  = {"input": input_tokens, "output": output_tokens},
+                )
+                _safe_flush()
+            except Exception:
+                pass
+
+        _save_to_db(
+            t_id, symbol, f"decide-step{step}:{anomaly_type}",
+            prompt, raw_content, input_tokens, output_tokens, latency_ms, True,
+        )
+        return raw_content
+
+    except Exception as e:
+        latency_ms = int(time.time() * 1000) - start_ms
+        log.error(f"decide_next_action failed at step {step}: {e}")
+
+        if lf_generation:
+            try:
+                lf_generation.end(output={"error": str(e)}, level="ERROR")
+                _safe_flush()
+            except Exception:
+                pass
+
+        _save_to_db(
+            t_id, symbol, f"decide-step{step}:{anomaly_type}",
+            prompt, "", 0, 0, latency_ms, False, str(e)[:200],
+        )
+        return ""

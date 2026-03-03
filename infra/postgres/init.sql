@@ -50,9 +50,10 @@ CREATE TABLE IF NOT EXISTS gold.investigation_reports (
     evidence_summary      TEXT,
     conclusion            TEXT,
     confidence            VARCHAR(10),
-    recommended_action    VARCHAR(30),
+    recommended_action    TEXT,
     findings_json         JSONB,
-    steps_taken           SMALLINT     DEFAULT 5,
+    react_steps           JSONB        DEFAULT '[]'::jsonb,
+    steps_taken           SMALLINT     DEFAULT 0,
     llm_time_seconds      NUMERIC(8,2),
     total_time_seconds    NUMERIC(8,2),
     PRIMARY KEY (id, investigated_at)

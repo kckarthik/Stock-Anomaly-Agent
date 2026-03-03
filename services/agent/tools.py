@@ -85,6 +85,7 @@ def get_price_history(symbol: str, days: int = 20) -> dict:
             2,
         )
 
+        direction = "up" if trend_pct > 0 else "down"
         return {
             "symbol":           symbol,
             "days_analyzed":    days,
@@ -93,7 +94,8 @@ def get_price_history(symbol: str, days: int = 20) -> dict:
             "52w_high":         price_high,
             "52w_low":          price_low,
             "5d_trend_pct":     trend_pct,
-            "trend_direction":  "up" if trend_pct > 0 else "down",
+            "trend_direction":  direction,
+            "assessment":       f"5d trend {trend_pct:+.2f}% ({direction}), avg vol {avg_vol:,}",
         }
 
     except Exception as e:

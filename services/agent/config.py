@@ -60,6 +60,8 @@ class PipelineConfig:
     MAX_INVESTIGATION_STEPS  = int(os.getenv("MAX_INVESTIGATION_STEPS",  "5"))
     AGENT_RETRY_DELAY        = int(os.getenv("AGENT_RETRY_DELAY_SECONDS","30"))
     AGENT_MAX_RETRIES        = int(os.getenv("AGENT_MAX_RETRIES",        "3"))
+    MAX_REACT_STEPS          = int(os.getenv("MAX_REACT_STEPS",          "4"))
+    MIN_REACT_STEPS          = int(os.getenv("MIN_REACT_STEPS",          "2"))
 
 
 # ── Watchlist ──────────────────────────────────────────────────────

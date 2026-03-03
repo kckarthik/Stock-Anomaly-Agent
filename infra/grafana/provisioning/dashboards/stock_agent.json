@@ -75,7 +75,7 @@
       "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
       "targets": [{
         "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
-        "rawSql": "SELECT investigated_at AS \"Time\", symbol AS \"Symbol\", anomaly_type AS \"Type\", severity AS \"Severity\", LEFT(hypothesis,80) AS \"Hypothesis\", confidence AS \"Conf\", LEFT(recommended_action,30) AS \"Action\" FROM gold.investigation_reports ORDER BY investigated_at DESC LIMIT 20",
+        "rawSql": "SELECT investigated_at AS \"Time\", symbol AS \"Symbol\", anomaly_type AS \"Type\", severity AS \"Severity\", steps_taken AS \"Steps\", LEFT(hypothesis,80) AS \"Hypothesis\", confidence AS \"Conf\", LEFT(recommended_action,60) AS \"Action\" FROM gold.investigation_reports ORDER BY investigated_at DESC LIMIT 20",
         "rawQuery": true,
         "format": "table",
         "refId": "A"
@@ -145,7 +145,7 @@
       "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
       "targets": [{
         "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
-        "rawSql": "SELECT called_at AS \"Time\", symbol AS \"Symbol\", model AS \"Model\", input_tokens AS \"In\", output_tokens AS \"Out\", latency_ms AS \"Latency ms\", success AS \"OK\" FROM obs.llm_traces ORDER BY called_at DESC LIMIT 20",
+        "rawSql": "SELECT called_at AS \"Time\", symbol AS \"Symbol\", anomaly_type AS \"Call Type\", input_tokens AS \"In\", output_tokens AS \"Out\", latency_ms AS \"Latency ms\", success AS \"OK\" FROM obs.llm_traces ORDER BY called_at DESC LIMIT 20",
         "rawQuery": true,
         "format": "table",
         "refId": "A"
@@ -180,6 +180,36 @@
         "refId": "A"
       }],
       "fieldConfig": {"defaults": {"unit":"percent","min":0,"max":100}}
+    },
+    {
+      "id": 13,
+      "title": "Avg Steps / Investigation",
+      "type": "stat",
+      "gridPos": {"x":12,"y":35,"w":6,"h":4},
+      "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+      "targets": [{
+        "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+        "rawSql": "SELECT ROUND(AVG(steps_taken)::NUMERIC,1) AS value FROM gold.investigation_reports WHERE investigated_at > NOW() - INTERVAL '24 hours' AND steps_taken > 0",
+        "rawQuery": true,
+        "format": "table",
+        "refId": "A"
+      }],
+      "fieldConfig": {"defaults": {"unit":"short","decimals":1,"thresholds":{"mode":"absolute","steps":[{"color":"green","value":0},{"color":"yellow","value":3},{"color":"red","value":4}]},"color":{"mode":"thresholds"}}}
+    },
+    {
+      "id": 14,
+      "title": "ReAct Override Rate %",
+      "type": "stat",
+      "gridPos": {"x":18,"y":35,"w":6,"h":4},
+      "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+      "targets": [{
+        "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+        "rawSql": "SELECT ROUND(100.0*SUM(CASE WHEN step->>'rationale'='override' THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0),1) AS value FROM gold.investigation_reports ir, jsonb_array_elements(ir.react_steps) AS step WHERE ir.investigated_at > NOW() - INTERVAL '24 hours'",
+        "rawQuery": true,
+        "format": "table",
+        "refId": "A"
+      }],
+      "fieldConfig": {"defaults": {"unit":"percent","min":0,"max":100,"thresholds":{"mode":"absolute","steps":[{"color":"green","value":0},{"color":"yellow","value":25},{"color":"red","value":50}]},"color":{"mode":"thresholds"}}}
     }
   ]
 }
