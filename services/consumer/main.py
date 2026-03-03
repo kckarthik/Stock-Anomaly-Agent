@@ -77,7 +77,7 @@ def make_consumer():
                 enable_auto_commit  = True,
                 consumer_timeout_ms = BATCH_TIMEOUT * 1000,
             )
-            log.info(f"✅ Kafka consumer connected")
+            log.info("✅ Kafka consumer connected")
             return c
         except Exception as e:
             log.warning(f"Kafka not ready (attempt {attempt}/20): {e}")

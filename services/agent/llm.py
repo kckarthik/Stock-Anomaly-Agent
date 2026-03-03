@@ -223,7 +223,7 @@ def synthesise(anomaly: dict, findings: dict,
         # Strip markdown fences if model wrapped output
         clean = raw_content
         if "```" in clean:
-            lines = [l for l in clean.split("\n") if not l.strip().startswith("```")]
+            lines = [ln for ln in clean.split("\n") if not ln.strip().startswith("```")]
             clean = "\n".join(lines)
 
         report = json.loads(clean.strip())
@@ -255,7 +255,8 @@ def synthesise(anomaly: dict, findings: dict,
             try:
                 lf_generation.end(output={"error": "json_parse_failed"}, level="ERROR")
                 _safe_flush()
-            except Exception: pass
+            except Exception:
+                pass
         _save_to_db(t_id, symbol, anomaly_type, prompt, raw_content,
                     0, 0, latency_ms, False, "json_parse_failed")
         return _fallback("JSON parse failed")
@@ -267,7 +268,8 @@ def synthesise(anomaly: dict, findings: dict,
             try:
                 lf_generation.end(output={"error": str(e)}, level="ERROR")
                 _safe_flush()
-            except Exception: pass
+            except Exception:
+                pass
         _save_to_db(t_id, symbol, anomaly_type, prompt, "",
                     0, 0, latency_ms, False, str(e)[:200])
         return _fallback(str(e))

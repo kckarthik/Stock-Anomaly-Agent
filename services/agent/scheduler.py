@@ -83,7 +83,7 @@ def dispatch_cycle() -> None:
         except Exception as e:
             log.error(f"  ❌ Dispatch failed: {e}")
 
-    log.info(f"── Done ─────────────────────────────────────────────────\n")
+    log.info("── Done ─────────────────────────────────────────────────\n")
 
 
 def main():

@@ -58,7 +58,7 @@ jobs:
           cache: pip
 
       - name: Install dbt-postgres
-        run: pip install dbt-postgres==1.7.4
+        run: pip install dbt-postgres==1.7.4 "protobuf>=3.20.0,<5.0.0"
 
       - name: dbt parse — validate all models compile
         working-directory: dbt

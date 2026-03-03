@@ -88,7 +88,7 @@ def run(anomaly_id: str) -> dict:
     }
 
     # ── LLM Synthesis (ONE call) ────────────────────────────────
-    log.info(f"  [LLM] Calling Qwen2.5 0.5b for synthesis...")
+    log.info("  [LLM] Calling Qwen2.5 0.5b for synthesis...")
     t_llm = time.time()
     report = llm.synthesise(anomaly, findings, trace_id=run_id)
     llm_time = time.time() - t_llm
@@ -169,7 +169,7 @@ def save_report(report: dict) -> None:
                 ),
             )
             conn.commit()
-            log.info(f"  💾 Report saved → gold.investigation_reports")
+            log.info("  💾 Report saved → gold.investigation_reports")
         finally:
             cur.close()
             conn.close()
