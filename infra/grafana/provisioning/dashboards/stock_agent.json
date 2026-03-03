@@ -1,0 +1,185 @@
+{
+  "title": "Stock Market Agent",
+  "uid": "stock-agent-main",
+  "tags": ["stock","agent"],
+  "timezone": "utc",
+  "refresh": "30s",
+  "time": {"from": "now-3h", "to": "now"},
+  "schemaVersion": 38,
+  "panels": [
+    {
+      "id": 9,
+      "title": "Last Quote Received",
+      "type": "stat",
+      "gridPos": {"x":0,"y":0,"w":6,"h":3},
+      "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+      "targets": [{
+        "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+        "rawSql": "SELECT EXTRACT(EPOCH FROM MAX(bar_time))*1000 AS value FROM silver.ohlcv_1min",
+        "rawQuery": true,
+        "format": "table",
+        "refId": "A"
+      }],
+      "fieldConfig": {"defaults": {"unit":"dateTimeAsLocal"}}
+    },
+    {
+      "id": 10,
+      "title": "Bars Last 5 Min",
+      "type": "stat",
+      "gridPos": {"x":6,"y":0,"w":6,"h":3},
+      "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+      "targets": [{
+        "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+        "rawSql": "SELECT COUNT(*) AS value FROM silver.ohlcv_1min WHERE bar_time > NOW() - INTERVAL '5 minutes'",
+        "rawQuery": true,
+        "format": "table",
+        "refId": "A"
+      }],
+      "fieldConfig": {"defaults": {"unit":"short","thresholds":{"mode":"absolute","steps":[{"color":"red","value":0},{"color":"yellow","value":1},{"color":"green","value":10}]},"color":{"mode":"thresholds"}}}
+    },
+    {
+      "id": 11,
+      "title": "Investigations Today",
+      "type": "stat",
+      "gridPos": {"x":12,"y":0,"w":6,"h":3},
+      "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+      "targets": [{
+        "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+        "rawSql": "SELECT COUNT(*) AS value FROM gold.investigation_reports WHERE investigated_at::date = CURRENT_DATE",
+        "rawQuery": true,
+        "format": "table",
+        "refId": "A"
+      }],
+      "fieldConfig": {"defaults": {"unit":"short"}}
+    },
+    {
+      "id": 12,
+      "title": "Pending Anomalies",
+      "type": "stat",
+      "gridPos": {"x":18,"y":0,"w":6,"h":3},
+      "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+      "targets": [{
+        "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+        "rawSql": "SELECT COUNT(*) AS value FROM gold.anomaly_feed WHERE investigated = FALSE",
+        "rawQuery": true,
+        "format": "table",
+        "refId": "A"
+      }],
+      "fieldConfig": {"defaults": {"unit":"short","thresholds":{"mode":"absolute","steps":[{"color":"green","value":0},{"color":"yellow","value":1},{"color":"red","value":5}]},"color":{"mode":"thresholds"}}}
+    },
+    {
+      "id": 1,
+      "title": "Latest Agent Reports",
+      "type": "table",
+      "gridPos": {"x":0,"y":3,"w":24,"h":9},
+      "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+      "targets": [{
+        "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+        "rawSql": "SELECT investigated_at AS \"Time\", symbol AS \"Symbol\", anomaly_type AS \"Type\", severity AS \"Severity\", LEFT(hypothesis,80) AS \"Hypothesis\", confidence AS \"Conf\", LEFT(recommended_action,30) AS \"Action\" FROM gold.investigation_reports ORDER BY investigated_at DESC LIMIT 20",
+        "rawQuery": true,
+        "format": "table",
+        "refId": "A"
+      }],
+      "options": {"sortBy": [{"displayName":"Time","desc":true}]},
+      "fieldConfig": {"overrides":[{"matcher":{"id":"byName","options":"Severity"},"properties":[{"id":"custom.displayMode","value":"color-background"}]}]}
+    },
+    {
+      "id": 2,
+      "title": "Severity Breakdown Today",
+      "type": "piechart",
+      "gridPos": {"x":0,"y":12,"w":6,"h":7},
+      "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+      "targets": [{
+        "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+        "rawSql": "SELECT severity AS \"Severity\", COUNT(*) AS \"Count\" FROM gold.investigation_reports WHERE investigated_at::date=CURRENT_DATE GROUP BY severity",
+        "rawQuery": true,
+        "format": "table",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 3,
+      "title": "Anomaly Feed",
+      "type": "table",
+      "gridPos": {"x":6,"y":12,"w":18,"h":7},
+      "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+      "targets": [{
+        "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+        "rawSql": "SELECT symbol AS \"Symbol\", anomaly_type AS \"Type\", severity_label AS \"Severity\", ROUND(anomaly_score::NUMERIC,2) AS \"Score\", investigated AS \"Done\" FROM gold.anomaly_feed ORDER BY severity_score DESC, anomaly_score DESC LIMIT 15",
+        "rawQuery": true,
+        "format": "table",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 7,
+      "title": "Quotes Published per min",
+      "type": "timeseries",
+      "gridPos": {"x":0,"y":19,"w":12,"h":8},
+      "datasource": {"type":"prometheus","uid":"prometheus-main"},
+      "targets": [{
+        "datasource": {"type":"prometheus","uid":"prometheus-main"},
+        "expr": "sum(rate(stock_producer_quotes_published_total[1m]))*60",
+        "legendFormat": "quotes/min",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 8,
+      "title": "Agent Tasks Dispatched",
+      "type": "timeseries",
+      "gridPos": {"x":12,"y":19,"w":12,"h":8},
+      "datasource": {"type":"prometheus","uid":"prometheus-main"},
+      "targets": [{
+        "datasource": {"type":"prometheus","uid":"prometheus-main"},
+        "expr": "rate(agent_anomalies_dispatched_total[5m])*60",
+        "legendFormat": "{{severity}}",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 4,
+      "title": "LLM Traces - Recent Calls",
+      "type": "table",
+      "gridPos": {"x":0,"y":27,"w":24,"h":8},
+      "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+      "targets": [{
+        "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+        "rawSql": "SELECT called_at AS \"Time\", symbol AS \"Symbol\", model AS \"Model\", input_tokens AS \"In\", output_tokens AS \"Out\", latency_ms AS \"Latency ms\", success AS \"OK\" FROM obs.llm_traces ORDER BY called_at DESC LIMIT 20",
+        "rawQuery": true,
+        "format": "table",
+        "refId": "A"
+      }]
+    },
+    {
+      "id": 5,
+      "title": "Avg LLM Latency (ms)",
+      "type": "stat",
+      "gridPos": {"x":0,"y":35,"w":6,"h":4},
+      "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+      "targets": [{
+        "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+        "rawSql": "SELECT ROUND(AVG(latency_ms)::NUMERIC,0) AS value FROM obs.llm_traces WHERE called_at > NOW() - INTERVAL '24 hours' AND success=TRUE",
+        "rawQuery": true,
+        "format": "table",
+        "refId": "A"
+      }],
+      "fieldConfig": {"defaults": {"unit":"ms"}}
+    },
+    {
+      "id": 6,
+      "title": "LLM Success Rate %",
+      "type": "stat",
+      "gridPos": {"x":6,"y":35,"w":6,"h":4},
+      "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+      "targets": [{
+        "datasource": {"type":"grafana-postgresql-datasource","uid":"timescale-main"},
+        "rawSql": "SELECT ROUND(100.0*SUM(CASE WHEN success THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0),1) AS value FROM obs.llm_traces WHERE called_at > NOW() - INTERVAL '24 hours'",
+        "rawQuery": true,
+        "format": "table",
+        "refId": "A"
+      }],
+      "fieldConfig": {"defaults": {"unit":"percent","min":0,"max":100}}
+    }
+  ]
+}

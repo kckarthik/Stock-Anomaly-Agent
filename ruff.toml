@@ -1,0 +1,17 @@
+target-version = "py311"
+line-length = 100
+
+[lint]
+# E = pycodestyle errors, F = pyflakes (undefined names, unused imports)
+# W = warnings, I = isort
+select = ["E", "F", "W"]
+ignore = [
+  "E501",  # line too long — formatter handles this
+  "E402",  # module import not at top of file — valid in service entrypoints
+  "F401",  # unused import — valid in __init__.py and config re-exports
+  "W291",  # trailing whitespace
+  "W293",  # whitespace before punctuation
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["F401", "F811"]  # test files allow reimports

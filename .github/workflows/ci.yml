@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "dev", "feature/**"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+
+  # ── 1. Lint ────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint — ruff
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install ruff
+        run: pip install ruff==0.4.4
+
+      - name: ruff check — services
+        run: ruff check services/
+
+      - name: ruff check — tests
+        run: ruff check tests/
+
+  # ── 2. Docker Compose Validate ────────────────────────────────────────────
+  compose-validate:
+    name: Docker Compose — validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate docker-compose.yml syntax
+        run: docker compose config --quiet
+
+  # ── 3. dbt Parse ──────────────────────────────────────────────────────────
+  dbt-validate:
+    name: dbt — parse models
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dbt-postgres
+        run: pip install dbt-postgres==1.7.4
+
+      - name: dbt parse — validate all models compile
+        working-directory: dbt
+        run: dbt parse --profiles-dir .
+        env:
+          TIMESCALE_HOST: localhost
+          TIMESCALE_PORT: "5432"
+          TIMESCALE_DB: stockdb
+          TIMESCALE_USER: stock
+          TIMESCALE_PASSWORD: stock123
+
+  # ── 4. Tests ──────────────────────────────────────────────────────────────
+  test:
+    name: Tests — pytest
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install test dependencies
+        run: pip install pytest pyyaml pandas numpy
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short
